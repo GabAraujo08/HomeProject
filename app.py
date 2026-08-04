@@ -38,6 +38,11 @@ STATUS_OPCOES = [
     "Top Opções",
 ]
 
+# Percentuais aplicados sobre o Valor Base (aluguel ou compra) para estimar
+# Entrada Mínima e Documentação. Ajuste aqui se as regras mudarem.
+PERCENTUAL_ENTRADA_MINIMA = 0.20  # 20% do valor base
+PERCENTUAL_DOCUMENTACAO = 0.06    # 6% do valor base
+
 # Ordem e nomes das colunas na planilha. Mantenha essa ordem estável:
 # se você editar a planilha manualmente, mantenha os cabeçalhos iguais.
 COLUNAS = [
@@ -47,6 +52,8 @@ COLUNAS = [
     "Valor_Base",
     "Valor_Condominio",
     "Valor_IPTU",
+    "Entrada_Minima",
+    "Documentacao",
     "Custo_Total",
     "Area_m2",
     "Vagas_Garagem",
@@ -61,6 +68,8 @@ COLUNAS_NUMERICAS = [
     "Valor_Base",
     "Valor_Condominio",
     "Valor_IPTU",
+    "Entrada_Minima",
+    "Documentacao",
     "Custo_Total",
     "Area_m2",
     "Vagas_Garagem",
@@ -166,7 +175,27 @@ def rotulo_imovel(row: pd.Series) -> str:
 
 def tela_cadastro() -> None:
     st.header("🏠 Cadastrar novo imóvel")
-    st.caption("Preencha os dados do anúncio. O custo total é calculado automaticamente.")
+    st.caption(
+        "Preencha os dados do anúncio. Entrada Mínima (20%), Documentação (6%) "
+        "e Custo Total são calculados automaticamente a partir do Valor Base."
+    )
+
+    # Valor Base fica FORA do st.form para que a prévia de Entrada Mínima,
+    # Documentação e Custo Total atualize em tempo real conforme você digita
+    # (dentro de um st.form os campos só "avisam" o app quando você clica em
+    # Salvar).
+    valor_base = st.number_input(
+        "Valor Base (aluguel ou compra) — R$*",
+        min_value=0.0, step=50.0, format="%.2f",
+        key="valor_base_input",
+    )
+
+    entrada_minima_preview = valor_base * PERCENTUAL_ENTRADA_MINIMA
+    documentacao_preview = valor_base * PERCENTUAL_DOCUMENTACAO
+
+    col_p1, col_p2 = st.columns(2)
+    col_p1.metric("Entrada Mínima (20% do Valor Base)", formatar_moeda(entrada_minima_preview))
+    col_p2.metric("Documentação (6% do Valor Base)", formatar_moeda(documentacao_preview))
 
     with st.form("form_cadastro", clear_on_submit=True):
         col1, col2 = st.columns(2)
@@ -174,10 +203,6 @@ def tela_cadastro() -> None:
         with col1:
             link = st.text_input("Link do anúncio (URL)*")
             bairro = st.text_input("Bairro*")
-            valor_base = st.number_input(
-                "Valor Base (aluguel ou compra) — R$*",
-                min_value=0.0, step=50.0, format="%.2f",
-            )
             valor_condominio = st.number_input(
                 "Valor Condomínio — R$", min_value=0.0, step=10.0, format="%.2f",
             )
@@ -196,8 +221,13 @@ def tela_cadastro() -> None:
 
         notas = st.text_area("Notas (impressões, prós e contras, etc.)", height=100)
 
-        custo_total_preview = valor_base + valor_condominio + valor_iptu
-        st.metric("Custo Total (calculado)", formatar_moeda(custo_total_preview))
+        entrada_minima = valor_base * PERCENTUAL_ENTRADA_MINIMA
+        documentacao = valor_base * PERCENTUAL_DOCUMENTACAO
+        # Custo Total NÃO soma o condomínio (é um custo recorrente à parte),
+        # mas soma o IPTU e a Documentação (custos de aquisição/posse).
+        custo_total_preview = valor_base + valor_iptu + documentacao
+        st.metric("Custo Total (Valor Base + IPTU + Documentação)", formatar_moeda(custo_total_preview))
+        st.caption("O Condomínio não entra no Custo Total por ser um custo mensal recorrente à parte.")
 
         enviado = st.form_submit_button("Salvar imóvel", type="primary", use_container_width=True)
 
@@ -212,7 +242,9 @@ def tela_cadastro() -> None:
                     "Valor_Base": valor_base,
                     "Valor_Condominio": valor_condominio,
                     "Valor_IPTU": valor_iptu,
-                    "Custo_Total": valor_base + valor_condominio + valor_iptu,
+                    "Entrada_Minima": entrada_minima,
+                    "Documentacao": documentacao,
+                    "Custo_Total": valor_base + valor_iptu + documentacao,
                     "Area_m2": area,
                     "Vagas_Garagem": int(vagas),
                     "Estacao_Proxima": estacao,
@@ -225,6 +257,9 @@ def tela_cadastro() -> None:
                     add_imovel(novo_registro)
                 st.success("Imóvel cadastrado com sucesso!")
                 st.balloons()
+                # Limpa o Valor Base (que fica fora do form) para o próximo cadastro
+                st.session_state["valor_base_input"] = 0.0
+                st.rerun()
 
 
 # --------------------------------------------------------------------------
@@ -290,8 +325,8 @@ def tela_comparacao() -> None:
     # ---------------- Tabela ----------------
     colunas_exibicao = [
         "Bairro", "Link", "Valor_Base", "Valor_Condominio", "Valor_IPTU",
-        "Custo_Total", "Area_m2", "Vagas_Garagem", "Estacao_Proxima",
-        "Tempo_Estacao_min", "Status", "Notas",
+        "Entrada_Minima", "Documentacao", "Custo_Total", "Area_m2",
+        "Vagas_Garagem", "Estacao_Proxima", "Tempo_Estacao_min", "Status", "Notas",
     ]
 
     st.dataframe(
@@ -303,10 +338,16 @@ def tela_comparacao() -> None:
             "Valor_Base": st.column_config.NumberColumn("Valor Base", format="R$ %.2f"),
             "Valor_Condominio": st.column_config.NumberColumn("Condomínio", format="R$ %.2f"),
             "Valor_IPTU": st.column_config.NumberColumn("IPTU", format="R$ %.2f"),
+            "Entrada_Minima": st.column_config.NumberColumn("Entrada Mínima (20%)", format="R$ %.2f"),
+            "Documentacao": st.column_config.NumberColumn("Documentação (6%)", format="R$ %.2f"),
             "Custo_Total": st.column_config.NumberColumn("Custo Total", format="R$ %.2f"),
             "Area_m2": st.column_config.NumberColumn("Área (m²)", format="%.1f m²"),
             "Tempo_Estacao_min": st.column_config.NumberColumn("Tempo transporte", format="%d min"),
         },
+    )
+    st.caption(
+        "Custo Total = Valor Base + IPTU + Documentação. "
+        "Condomínio e Entrada Mínima são exibidos à parte para referência."
     )
 
     st.divider()
